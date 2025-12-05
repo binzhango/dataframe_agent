@@ -354,6 +354,13 @@ def main() -> int:
     # Load configuration
     config = HeavyJobRunnerConfig()
     
+    # Validate configuration on startup
+    try:
+        config.validate_on_startup()
+    except ValueError as e:
+        print(f"Configuration validation failed: {e}", file=sys.stderr)
+        return 1
+    
     # Set up logging
     setup_logging(config.service_name, config.log_level)
     logger = get_logger(__name__)
