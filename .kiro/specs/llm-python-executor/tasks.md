@@ -302,7 +302,7 @@
   - Test that metrics endpoint exposes required metrics in Prometheus format
   - _Requirements: 6.2_
 
-- [ ] 18. Create end-to-end integration tests
+- [x] 18. Create end-to-end integration tests
   - Write test for REST API query → code generation → validation → lightweight execution → response
   - Write test for REST API query → code generation → validation → heavy job creation → completion
   - Write test for Event Hub message → parsing → job creation → execution → completion event
@@ -310,7 +310,7 @@
   - Write test for execution failure → retry → success flow
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 4.3, 4.5, 5.1, 5.2, 5.3_
 
-- [ ] 19. Implement configuration management
+- [x] 19. Implement configuration management
   - Create Pydantic Settings classes for LLM Service configuration (LLM endpoint, validation rules, retry limits)
   - Create Pydantic Settings classes for Executor Service configuration (timeout, resource limits, Event Hub connection)
   - Create Pydantic Settings classes for Heavy Job Runner configuration (storage credentials, Event Hub connection)
@@ -318,7 +318,7 @@
   - Implement configuration validation on service startup
   - _Requirements: 7.4_
 
-- [ ] 19.1 Write unit test for configuration loading
+- [x] 19.1 Write unit test for configuration loading
   - Test that each component loads configuration independently from environment
   - _Requirements: 7.4_
 
