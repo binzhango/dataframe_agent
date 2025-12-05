@@ -6,18 +6,39 @@ for natural language query processing and health checks.
 
 import uuid
 import logging
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from llm_executor.llm_service.orchestration import LLMOrchestrationFlow
 from llm_executor.shared.config import LLMServiceConfig
 from llm_executor.shared.logging_util import get_logger
 from llm_executor.shared.models import CodeComplexity
+from llm_executor.shared.metrics import (
+    record_request,
+    record_validation,
+    record_validation_retry,
+    record_classification,
+    set_service_health,
+    get_metrics,
+)
+from llm_executor.shared.tracing import (
+    initialize_tracing,
+    instrument_fastapi,
+    shutdown_tracing,
+    trace_code_generation,
+    trace_validation,
+    trace_classification,
+    add_span_attribute,
+    set_span_status,
+    record_exception,
+)
+from opentelemetry.trace import StatusCode
 
 
 # ============================================================================
@@ -72,13 +93,36 @@ async def lifespan(app: FastAPI):
         }
     )
     
+    # Initialize tracing
+    try:
+        initialize_tracing(
+            service_name=config.service_name,
+            service_version="0.1.0",
+        )
+        logger.info("OpenTelemetry tracing initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize tracing: {e}")
+    
     # Initialize the orchestration flow
     app.state.orchestration_flow = LLMOrchestrationFlow()
+    
+    # Set service health to healthy
+    set_service_health(config.service_name, True)
     
     yield
     
     # Shutdown
     logger.info("Shutting down LLM Service")
+    
+    # Set service health to unhealthy
+    set_service_health(config.service_name, False)
+    
+    # Shutdown tracing
+    try:
+        shutdown_tracing()
+        logger.info("OpenTelemetry tracing shutdown")
+    except Exception as e:
+        logger.warning(f"Failed to shutdown tracing: {e}")
 
 
 # Create FastAPI application
@@ -88,6 +132,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Instrument FastAPI with OpenTelemetry
+try:
+    instrument_fastapi(app)
+except Exception as e:
+    logger.warning(f"Failed to instrument FastAPI with OpenTelemetry: {e}")
 
 
 # ============================================================================
@@ -104,12 +154,15 @@ app.add_middleware(
 )
 
 
-# Request ID middleware
+# Request ID and metrics middleware
 @app.middleware("http")
-async def add_request_id(request: Request, call_next):
-    """Add request ID to all requests and propagate through pipeline."""
+async def add_request_id_and_metrics(request: Request, call_next):
+    """Add request ID to all requests, record metrics, and propagate through pipeline."""
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     request.state.request_id = request_id
+    
+    # Record request start time
+    start_time = time.time()
     
     # Add request ID to logger context
     logger.info(
@@ -121,8 +174,25 @@ async def add_request_id(request: Request, call_next):
         }
     )
     
+    # Record request metric
+    record_request(
+        service=config.service_name,
+        endpoint=request.url.path,
+        method=request.method,
+    )
+    
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
+    
+    # Record request duration (excluding /metrics endpoint)
+    if request.url.path != "/metrics":
+        duration = time.time() - start_time
+        from llm_executor.shared.metrics import request_duration
+        request_duration.labels(
+            service=config.service_name,
+            endpoint=request.url.path,
+            method=request.method,
+        ).observe(duration)
     
     return response
 
@@ -191,15 +261,40 @@ async def process_query(query_request: QueryRequest, request: Request) -> QueryR
             request.app.state.orchestration_flow = LLMOrchestrationFlow()
         
         orchestration_flow: LLMOrchestrationFlow = request.app.state.orchestration_flow
-        final_state = orchestration_flow.execute(
-            query=query_request.query,
-            max_retries=query_request.max_retries,
-        )
+        
+        # Trace code generation
+        with trace_code_generation(query_request.query, request_id):
+            final_state = orchestration_flow.execute(
+                query=query_request.query,
+                max_retries=query_request.max_retries,
+            )
         
         # Determine overall status
         status = final_state.get("status", "unknown")
         validation_result = final_state.get("validation_result")
         classification = final_state.get("classification")
+        
+        # Record validation metrics
+        if validation_result:
+            validation_attempts = final_state.get("validation_attempts", 0)
+            record_validation(
+                service=config.service_name,
+                success=validation_result.is_valid,
+                duration_seconds=0.0,  # Duration tracked in validator
+            )
+            
+            # Record retry attempts
+            for _ in range(max(0, validation_attempts - 1)):
+                record_validation_retry(config.service_name)
+            
+            # Add validation result to span
+            add_span_attribute("validation.success", validation_result.is_valid)
+            add_span_attribute("validation.attempts", validation_attempts)
+        
+        # Record classification metrics
+        if classification:
+            record_classification(config.service_name, classification.value)
+            add_span_attribute("classification", classification.value)
         
         # Check if validation failed after max retries
         if validation_result and not validation_result.is_valid:
@@ -213,6 +308,7 @@ async def process_query(query_request: QueryRequest, request: Request) -> QueryR
                         "errors": validation_result.errors,
                     }
                 )
+                set_span_status(StatusCode.ERROR, "Validation failed after max retries")
         
         # Build execution result
         execution_result = {
@@ -235,6 +331,10 @@ async def process_query(query_request: QueryRequest, request: Request) -> QueryR
             }
         )
         
+        # Set span status to OK
+        if validation_result and validation_result.is_valid:
+            set_span_status(StatusCode.OK)
+        
         return QueryResponse(
             request_id=request_id,
             generated_code=final_state.get("generated_code", ""),
@@ -254,6 +354,18 @@ async def process_query(query_request: QueryRequest, request: Request) -> QueryR
             },
             exc_info=True,
         )
+        
+        # Record exception in span
+        record_exception(e)
+        
+        # Record error metric
+        from llm_executor.shared.metrics import record_error
+        record_error(
+            service=config.service_name,
+            error_type=type(e).__name__,
+            component="query_processing",
+        )
+        
         raise HTTPException(
             status_code=500,
             detail=f"Query processing failed: {str(e)}"
@@ -262,9 +374,10 @@ async def process_query(query_request: QueryRequest, request: Request) -> QueryR
 
 @app.get("/api/v1/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Health check endpoint.
+    """Health check endpoint (liveness probe).
     
     Returns the current health status of the LLM Service.
+    This endpoint is used by Kubernetes liveness probes.
     
     Returns:
         HealthResponse containing service status and version information
@@ -274,6 +387,38 @@ async def health_check() -> HealthResponse:
         version="0.1.0",
         service_name=config.service_name,
     )
+
+
+@app.get("/api/v1/ready")
+async def readiness_check() -> dict:
+    """Readiness check endpoint (readiness probe).
+    
+    Returns whether the service is ready to accept requests.
+    This endpoint is used by Kubernetes readiness probes.
+    
+    Returns:
+        Dictionary with readiness status
+    """
+    # Check if orchestration flow is initialized
+    ready = hasattr(app.state, "orchestration_flow")
+    
+    return {
+        "ready": ready,
+        "service_name": config.service_name,
+    }
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus metrics endpoint.
+    
+    Exposes metrics in Prometheus text format for scraping.
+    
+    Returns:
+        Response with Prometheus metrics
+    """
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
 
 
 # ============================================================================
