@@ -181,3 +181,51 @@ class TestExecuteSnippetEndpoint:
         
         response = client.post("/api/v1/execute_snippet", json=request_data)
         assert response.status_code == 422  # Validation error
+
+
+
+class TestCreateHeavyJobEndpoint:
+    """Tests for the /api/v1/create_heavy_job endpoint."""
+    
+    def test_create_heavy_job_endpoint_exists(self, client):
+        """Test that /api/v1/create_heavy_job endpoint exists."""
+        # This will return 503 if Kubernetes is not available, which is expected
+        response = client.post(
+            "/api/v1/create_heavy_job",
+            json={
+                "code": "import pandas as pd\nprint('test')",
+                "request_id": "test-123",
+            }
+        )
+        # Should return either 201 (success) or 503 (Kubernetes not available)
+        assert response.status_code in [201, 503]
+    
+    def test_create_heavy_job_validates_request(self, client):
+        """Test that /api/v1/create_heavy_job validates request data."""
+        # Missing required 'code' field
+        response = client.post(
+            "/api/v1/create_heavy_job",
+            json={
+                "request_id": "test-123",
+            }
+        )
+        assert response.status_code == 422  # Validation error
+    
+    def test_create_heavy_job_with_resource_limits(self, client):
+        """Test that /api/v1/create_heavy_job accepts resource limits."""
+        response = client.post(
+            "/api/v1/create_heavy_job",
+            json={
+                "code": "import pandas as pd\nprint('test')",
+                "request_id": "test-456",
+                "resource_limits": {
+                    "cpu_limit": "4",
+                    "memory_limit": "8Gi",
+                    "cpu_request": "2",
+                    "memory_request": "4Gi",
+                    "timeout_seconds": 300,
+                }
+            }
+        )
+        # Should return either 201 (success) or 503 (Kubernetes not available)
+        assert response.status_code in [201, 503]

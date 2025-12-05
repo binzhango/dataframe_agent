@@ -14,8 +14,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from llm_executor.executor_service.secure_executor import SecureExecutor
+from llm_executor.executor_service.kubernetes_job_manager import KubernetesJobManager
 from llm_executor.shared.config import ExecutorServiceConfig
-from llm_executor.shared.models import ExecutionResult, ExecutionStatus
+from llm_executor.shared.models import ExecutionResult, ExecutionStatus, JobCreationRequest, ResourceLimits
 from llm_executor.shared.logging_util import get_logger
 
 logger = get_logger(__name__)
@@ -49,11 +50,39 @@ class HealthResponse(BaseModel):
     version: str = Field(default="1.0.0", description="Service version")
 
 
+class CreateHeavyJobRequest(BaseModel):
+    """Request model for creating a heavy job."""
+    code: str = Field(..., description="Python code to execute", min_length=1)
+    request_id: str = Field(default_factory=lambda: f"req-{uuid.uuid4()}", description="Unique request identifier")
+    resource_limits: ResourceLimits = Field(default_factory=ResourceLimits, description="Resource limits for the job")
+
+
+class CreateHeavyJobResponse(BaseModel):
+    """Response model for heavy job creation."""
+    job_id: str = Field(..., description="Unique job identifier")
+    status: str = Field(..., description="Job status")
+    created_at: str = Field(..., description="Job creation timestamp")
+
+
 # Initialize configuration
 config = ExecutorServiceConfig()
 
 # Initialize SecureExecutor
 executor = SecureExecutor(default_timeout=config.execution_timeout)
+
+# Initialize KubernetesJobManager (will be None if Kubernetes is not available)
+try:
+    job_manager = KubernetesJobManager(
+        namespace=config.kubernetes_namespace,
+        image="heavy-executor:latest",
+        ttl_seconds=3600,
+    )
+except Exception as e:
+    logger.warning(
+        "Failed to initialize KubernetesJobManager, heavy job creation will not be available",
+        extra={"error": str(e)}
+    )
+    job_manager = None
 
 
 @asynccontextmanager
@@ -180,6 +209,106 @@ async def execute_snippet(request: ExecuteSnippetRequest) -> ExecuteSnippetRespo
     finally:
         # Remove from active executions
         active_executions.pop(request_id, None)
+
+
+@app.post(
+    "/api/v1/create_heavy_job",
+    response_model=CreateHeavyJobResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create Kubernetes Job for heavy code execution",
+    description="Creates a Kubernetes Job for resource-intensive Python code with specialized libraries",
+)
+async def create_heavy_job(request: CreateHeavyJobRequest) -> CreateHeavyJobResponse:
+    """
+    Create a Kubernetes Job for heavy code execution.
+    
+    This endpoint:
+    - Validates the request using Pydantic models
+    - Creates a Kubernetes Job with resource limits
+    - Configures security context and TTL cleanup
+    - Returns job_id, status, and created_at timestamp
+    
+    Requirements:
+    - 4.3: Create Kubernetes Jobs for heavy workloads with CPU and memory limits
+    
+    Args:
+        request: Heavy job creation request containing code and resource limits
+    
+    Returns:
+        CreateHeavyJobResponse with job details
+    
+    Raises:
+        HTTPException: If job creation fails or Kubernetes is not available
+    """
+    if job_manager is None:
+        logger.error(
+            "Kubernetes Job creation requested but KubernetesJobManager is not available",
+            extra={"request_id": request.request_id}
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error": "Kubernetes Job creation not available",
+                "message": "KubernetesJobManager is not initialized",
+                "request_id": request.request_id,
+            }
+        )
+    
+    logger.info(
+        "Received heavy job creation request",
+        extra={
+            "request_id": request.request_id,
+            "code_length": len(request.code),
+            "cpu_limit": request.resource_limits.cpu_limit,
+            "memory_limit": request.resource_limits.memory_limit,
+        }
+    )
+    
+    try:
+        # Create JobCreationRequest from the API request
+        job_request = JobCreationRequest(
+            request_id=request.request_id,
+            code=request.code,
+            resource_limits=request.resource_limits,
+        )
+        
+        # Create the Kubernetes Job
+        result = job_manager.create_job(job_request)
+        
+        logger.info(
+            "Heavy job created successfully",
+            extra={
+                "request_id": request.request_id,
+                "job_id": result.job_id,
+                "status": result.status,
+            }
+        )
+        
+        return CreateHeavyJobResponse(
+            job_id=result.job_id,
+            status=result.status,
+            created_at=result.created_at,
+        )
+    
+    except Exception as e:
+        logger.error(
+            "Heavy job creation failed with exception",
+            extra={
+                "request_id": request.request_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "Job creation failed",
+                "message": str(e),
+                "request_id": request.request_id,
+            }
+        )
 
 
 @app.get(
