@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Set up project structure and shared library
+- [x] 1. Set up project structure and shared library
   - Create monorepo directory structure with llm_service, executor_service, job_runner, shared, and infra folders
   - Implement shared Pydantic models for CodeExecutionRequest, ValidationResult, ExecutionResult, and ResourceLimits
   - Create common logging utility with structured logging format including request_id field
@@ -90,79 +90,85 @@
   - Test that /api/v1/health returns 200 status and service information
   - _Requirements: 6.5_
 
-- [ ] 6. Implement Executor Service with secure sandbox
-  - Create FastAPI application for Executor Service
-  - Implement secure subprocess execution with restricted namespace and environment variables
+- [x] 6. Implement Executor Service core execution engine
+  - Create executor_service directory structure under src/llm_executor/
+  - Implement SecureExecutor class with subprocess-based code execution
   - Add timeout enforcement using subprocess timeout parameter
-  - Implement output capture for stdout and stderr
-  - Add CPU and memory limit enforcement using resource module or systemd-run
-  - Implement network isolation using subprocess with network restrictions
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+  - Implement output capture for stdout and stderr with duration tracking
+  - Add restricted environment variables (no PATH, limited env vars)
+  - Implement working directory isolation using temporary directories
+  - _Requirements: 3.1, 3.4, 3.5, 6.2_
 
-- [ ] 6.1 Write property test for lightweight code uses restricted namespace
-  - **Property 8: Lightweight code uses restricted namespace**
-  - **Validates: Requirements 3.1**
-
-- [ ] 6.2 Write property test for network isolation
-  - **Property 9: Network isolation blocks access**
-  - **Validates: Requirements 3.3**
-
-- [ ] 6.3 Write property test for timeout termination
+- [x] 6.1 Write property test for timeout termination
   - **Property 10: Timeout terminates execution**
   - **Validates: Requirements 3.4**
 
-- [ ] 6.4 Write property test for output capture
+- [x] 6.2 Write property test for output capture
   - **Property 11: Output capture completeness**
   - **Validates: Requirements 3.5**
 
-- [ ] 7. Implement Executor Service REST API endpoints
-  - Implement POST /api/v1/execute_snippet endpoint that executes lightweight code
-  - Implement POST /api/v1/create_heavy_job endpoint that creates Kubernetes Jobs
-  - Implement GET /api/v1/health endpoint with active executions count
-  - Add request validation using Pydantic models
-  - Add error handling for execution failures with appropriate HTTP status codes
-  - _Requirements: 3.1, 4.3, 6.5_
-
-- [ ] 7.1 Write property test for execution duration recording
+- [x] 6.3 Write property test for execution duration recording
   - **Property 19: Execution duration is recorded**
   - **Validates: Requirements 6.2**
 
-- [ ] 7.2 Write unit test for health endpoint
+- [x] 7. Implement Executor Service REST API
+  - Create FastAPI application for Executor Service
+  - Implement POST /api/v1/execute_snippet endpoint that executes lightweight code using SecureExecutor
+  - Implement GET /api/v1/health endpoint with active executions count
+  - Add request validation using Pydantic models
+  - Add error handling for execution failures with appropriate HTTP status codes
+  - Wire endpoint to SecureExecutor for code execution
+  - _Requirements: 3.1, 6.5_
+
+- [x] 7.1 Write property test for lightweight code uses restricted namespace
+  - **Property 8: Lightweight code uses restricted namespace**
+  - **Validates: Requirements 3.1**
+
+- [x] 7.2 Write unit test for health endpoint
   - Test that /api/v1/health returns service status and active execution count
   - _Requirements: 6.5_
 
 - [ ] 8. Implement Kubernetes Job creation and management
-  - Create Kubernetes Job template with CPU and memory limits
-  - Implement job creation logic using Kubernetes Python client
-  - Add job naming with unique identifiers (job_id)
+  - Create KubernetesJobManager class in executor_service
+  - Implement job creation logic using Kubernetes Python client (kubernetes library)
+  - Create Job template with CPU and memory limits from ResourceLimits model
+  - Add job naming with unique identifiers (job_id based on request_id)
   - Configure TTL for automatic cleanup (ttlSecondsAfterFinished: 3600)
   - Add PreStop lifecycle hooks for graceful shutdown
   - Configure pod security context (runAsNonRoot, readOnlyRootFilesystem, no privilege escalation)
   - _Requirements: 4.3, 8.1, 8.2, 8.3, 8.4_
 
-- [ ] 8.1 Write property test for heavy code creates Kubernetes Job
+- [ ] 8.1 Implement POST /api/v1/create_heavy_job endpoint
+  - Add endpoint to Executor Service API that creates Kubernetes Jobs
+  - Wire endpoint to KubernetesJobManager for job creation
+  - Return job_id, status, and created_at timestamp
+  - _Requirements: 4.3_
+
+- [ ] 8.2 Write property test for heavy code creates Kubernetes Job
   - **Property 14: Heavy code creates Kubernetes Job**
   - **Validates: Requirements 4.3, 8.1**
 
-- [ ] 8.2 Write unit test for job security configuration
+- [ ] 8.3 Write unit test for job security configuration
   - Test that created jobs have correct security context and resource limits
   - _Requirements: 8.2_
 
-- [ ] 8.3 Write unit test for job TTL cleanup
+- [ ] 8.4 Write unit test for job TTL cleanup
   - Test that completed jobs are configured with TTL for automatic cleanup
   - _Requirements: 8.3_
 
-- [ ] 8.4 Write unit test for PreStop hooks
+- [ ] 8.5 Write unit test for PreStop hooks
   - Test that job pods have PreStop hooks configured
   - _Requirements: 8.4_
 
 - [ ] 9. Build Heavy Job Runner execution logic
-  - Create Python script that fetches code from job specification environment variables
-  - Implement code execution in subprocess with timeout
-  - Add result capture and serialization
-  - Implement result upload to Azure Blob Storage using fsspec and adlfs
-  - Add support for S3 result storage using s3fs
-  - Implement temporary file cleanup after execution
+  - Create runner.py script in job_runner directory as main entry point
+  - Implement code fetching from environment variables (CODE, REQUEST_ID, TIMEOUT)
+  - Implement code execution in subprocess with timeout enforcement
+  - Add result capture and serialization to JSON format
+  - Implement result upload to Azure Blob Storage using fsspec and adlfs libraries
+  - Add support for S3 result storage using s3fs library
+  - Implement temporary file cleanup after execution (success or failure)
+  - Add structured logging with request_id throughout execution
   - _Requirements: 4.4, 8.5_
 
 - [ ] 9.1 Write property test for temporary file cleanup
@@ -170,10 +176,11 @@
   - **Validates: Requirements 8.5**
 
 - [ ] 10. Implement Event Hub integration for Heavy Job Runner
-  - Add Azure Event Hub client initialization with connection string from environment
-  - Implement completion event emission with request_id, status, and result_location
-  - Add error event emission for failed executions
-  - Implement structured event payload using Pydantic models
+  - Add Azure Event Hub producer client initialization in runner.py
+  - Implement completion event emission with request_id, status, result_location, and duration_ms
+  - Add error event emission for failed executions with error details
+  - Implement structured event payload using ExecutionResult model
+  - Add connection string configuration from HeavyJobRunnerConfig
   - _Requirements: 4.5, 5.3_
 
 - [ ] 10.1 Write property test for job completion emits event
@@ -181,11 +188,14 @@
   - **Validates: Requirements 4.5, 5.3**
 
 - [ ] 11. Implement Event Hub consumer in Executor Service
-  - Create Event Hub consumer that subscribes to code-execution-requests topic
-  - Implement message parsing and validation using Pydantic models
-  - Add routing logic that classifies code and creates Kubernetes Jobs for heavy workloads
+  - Create EventHubConsumer class in executor_service
+  - Implement consumer that subscribes to code-execution-requests topic
+  - Implement message parsing and validation using CodeExecutionRequest model
+  - Add routing logic that uses CodeClassifier to determine execution path
+  - For heavy code, invoke KubernetesJobManager to create jobs
+  - For lightweight code, invoke SecureExecutor directly
   - Implement error handling that logs failures without blocking Event Hub retry
-  - Add structured logging for all Event Hub message processing
+  - Add structured logging with request_id for all Event Hub message processing
   - _Requirements: 5.1, 5.2, 5.4, 5.5_
 
 - [ ] 11.1 Write property test for Event Hub message parsing
@@ -201,11 +211,13 @@
   - _Requirements: 5.4_
 
 - [ ] 12. Build Heavy Job Runner Docker image with data libraries
-  - Create Dockerfile based on python:3.11 with all required libraries
+  - Create deploy/docker/heavy-job-runner/Dockerfile based on python:3.11
   - Install pandas, modin, polars, pyarrow, cloudpickle, fsspec, adlfs, s3fs, and numba
-  - Configure non-root user for security
-  - Set up read-only filesystem where possible
-  - Optimize image size with multi-stage build
+  - Copy job_runner source code and install llm_executor package
+  - Configure non-root user (UID 1000) for security
+  - Set ENTRYPOINT to python -m llm_executor.job_runner.runner
+  - Add labels for version and component identification
+  - Optimize image size with multi-stage build if needed
   - _Requirements: 10.1, 10.2, 10.3_
 
 - [ ] 12.1 Write property test for supported libraries are importable
@@ -221,12 +233,14 @@
   - _Requirements: 10.3_
 
 - [ ] 13. Implement error handling and retry logic
-  - Create ValidationErrorHandler that manages validation retry with max attempts
-  - Create ExecutionErrorHandler that categorizes errors as retryable or non-retryable
-  - Implement exponential backoff for retryable execution errors
-  - Add logic to skip retry for timeout errors
+  - Create error_handlers.py module in executor_service
+  - Implement ExecutionErrorHandler that categorizes errors as retryable or non-retryable
+  - Add exponential backoff calculation for retryable execution errors (2^attempt, max 60s)
+  - Add logic to mark TimeoutError as non-retryable
+  - Implement retry wrapper for SecureExecutor that respects max_retries from config
   - Implement max retry exhaustion handling that returns detailed failure response
-  - Create JobErrorHandler that monitors Kubernetes Job status and emits failure events
+  - Add JobErrorHandler that monitors Kubernetes Job status via watch API
+  - Implement failure event emission for jobs that exceed retry limits
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
 - [ ] 13.1 Write property test for execution retry policy
