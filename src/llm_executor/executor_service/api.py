@@ -6,11 +6,12 @@ Jobs for heavy workloads.
 """
 
 import uuid
+import time
 from contextlib import asynccontextmanager
 from typing import Dict
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, status, Request
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from llm_executor.executor_service.secure_executor import SecureExecutor
@@ -18,11 +19,37 @@ from llm_executor.executor_service.kubernetes_job_manager import KubernetesJobMa
 from llm_executor.shared.config import ExecutorServiceConfig
 from llm_executor.shared.models import ExecutionResult, ExecutionStatus, JobCreationRequest, ResourceLimits
 from llm_executor.shared.logging_util import get_logger
+from llm_executor.shared.database import DatabaseManager
+from llm_executor.shared.repository import JobHistoryRepository
+from llm_executor.shared.metrics import (
+    record_request,
+    record_execution,
+    record_kubernetes_job,
+    set_active_executions,
+    set_service_health,
+    get_metrics,
+    record_error,
+)
+from llm_executor.shared.tracing import (
+    initialize_tracing,
+    instrument_fastapi,
+    shutdown_tracing,
+    trace_execution,
+    trace_kubernetes_job,
+    add_span_attribute,
+    set_span_status,
+    record_exception,
+)
+from opentelemetry.trace import StatusCode
 
 logger = get_logger(__name__)
 
 # Global state for tracking active executions
 active_executions: Dict[str, bool] = {}
+
+# Initialize database manager
+db_manager = DatabaseManager()
+db_manager.create_tables()
 
 
 class ExecuteSnippetRequest(BaseModel):
@@ -64,6 +91,28 @@ class CreateHeavyJobResponse(BaseModel):
     created_at: str = Field(..., description="Job creation timestamp")
 
 
+class JobHistoryResponse(BaseModel):
+    """Response model for job history record."""
+    id: int = Field(..., description="Database record ID")
+    request_id: str = Field(..., description="Request identifier")
+    timestamp: str = Field(..., description="Execution timestamp")
+    status: str = Field(..., description="Execution status")
+    exit_code: int = Field(None, description="Exit code")
+    duration_ms: int = Field(..., description="Execution duration in milliseconds")
+    resource_usage: Dict = Field(None, description="Resource usage metrics")
+    classification: str = Field(None, description="Code classification")
+    created_at: str = Field(..., description="Record creation timestamp")
+    updated_at: str = Field(..., description="Record update timestamp")
+
+
+class JobHistoryListResponse(BaseModel):
+    """Response model for job history list."""
+    total: int = Field(..., description="Total number of records")
+    limit: int = Field(..., description="Number of records per page")
+    offset: int = Field(..., description="Number of records skipped")
+    records: list = Field(..., description="List of job history records")
+
+
 # Initialize configuration
 config = ExecutorServiceConfig()
 
@@ -98,9 +147,38 @@ async def lifespan(app: FastAPI):
             "execution_timeout": config.execution_timeout,
         }
     )
+    
+    # Initialize tracing
+    try:
+        initialize_tracing(
+            service_name=config.service_name,
+            service_version="1.0.0",
+        )
+        logger.info("OpenTelemetry tracing initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize tracing: {e}")
+    
+    # Set service health to healthy
+    set_service_health(config.service_name, True)
+    
+    # Initialize active executions gauge
+    set_active_executions(config.service_name, "lightweight", 0)
+    set_active_executions(config.service_name, "heavy", 0)
+    
     yield
+    
     # Shutdown
     logger.info("Executor Service shutting down")
+    
+    # Set service health to unhealthy
+    set_service_health(config.service_name, False)
+    
+    # Shutdown tracing
+    try:
+        shutdown_tracing()
+        logger.info("OpenTelemetry tracing shutdown")
+    except Exception as e:
+        logger.warning(f"Failed to shutdown tracing: {e}")
 
 
 # Create FastAPI application
@@ -110,6 +188,41 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Instrument FastAPI with OpenTelemetry
+try:
+    instrument_fastapi(app)
+except Exception as e:
+    logger.warning(f"Failed to instrument FastAPI with OpenTelemetry: {e}")
+
+
+# Request metrics middleware
+@app.middleware("http")
+async def add_metrics_middleware(request: Request, call_next):
+    """Record request metrics."""
+    # Record request start time
+    start_time = time.time()
+    
+    # Record request metric
+    record_request(
+        service=config.service_name,
+        endpoint=request.url.path,
+        method=request.method,
+    )
+    
+    response = await call_next(request)
+    
+    # Record request duration (excluding /metrics endpoint)
+    if request.url.path != "/metrics":
+        duration = time.time() - start_time
+        from llm_executor.shared.metrics import request_duration
+        request_duration.labels(
+            service=config.service_name,
+            endpoint=request.url.path,
+            method=request.method,
+        ).observe(duration)
+    
+    return response
 
 
 @app.post(
@@ -156,13 +269,32 @@ async def execute_snippet(request: ExecuteSnippetRequest) -> ExecuteSnippetRespo
     
     # Track active execution
     active_executions[request_id] = True
+    set_active_executions(config.service_name, "lightweight", len(active_executions))
     
     try:
-        # Execute code using SecureExecutor
-        result: ExecutionResult = executor.execute(
-            code=request.code,
-            request_id=request_id,
-            timeout=request.timeout,
+        # Execute code using SecureExecutor with tracing
+        with trace_execution(request.code, request_id, "lightweight"):
+            result: ExecutionResult = executor.execute(
+                code=request.code,
+                request_id=request_id,
+                timeout=request.timeout,
+            )
+            
+            # Add execution details to span
+            add_span_attribute("execution.exit_code", result.exit_code)
+            add_span_attribute("execution.duration_ms", result.duration_ms)
+            add_span_attribute("execution.status", result.status.value)
+        
+        # Record execution metrics
+        execution_status = "success" if result.exit_code == 0 else "failure"
+        if result.status == ExecutionStatus.TIMEOUT:
+            execution_status = "timeout"
+        
+        record_execution(
+            service=config.service_name,
+            classification="lightweight",
+            status=execution_status,
+            duration_seconds=result.duration_ms / 1000.0,
         )
         
         logger.info(
@@ -174,6 +306,38 @@ async def execute_snippet(request: ExecuteSnippetRequest) -> ExecuteSnippetRespo
                 "duration_ms": result.duration_ms,
             }
         )
+        
+        # Set span status
+        if result.exit_code == 0:
+            set_span_status(StatusCode.OK)
+        else:
+            set_span_status(StatusCode.ERROR, f"Execution failed with exit code {result.exit_code}")
+        
+        # Save execution result to job history
+        try:
+            session = db_manager.get_session()
+            repository = JobHistoryRepository(session)
+            repository.save_execution(
+                execution_result=result,
+                code=request.code,
+                classification="lightweight",
+                resource_usage={"timeout": request.timeout}
+            )
+            session.close()
+            logger.debug(
+                "Execution result saved to job history",
+                extra={"request_id": request_id}
+            )
+        except Exception as db_error:
+            # Log but don't fail the request if database save fails
+            logger.error(
+                "Failed to save execution result to job history",
+                extra={
+                    "request_id": request_id,
+                    "error": str(db_error),
+                },
+                exc_info=True,
+            )
         
         # Return successful response
         return ExecuteSnippetResponse(
@@ -196,6 +360,16 @@ async def execute_snippet(request: ExecuteSnippetRequest) -> ExecuteSnippetRespo
             exc_info=True,
         )
         
+        # Record exception in span
+        record_exception(e)
+        
+        # Record error metric
+        record_error(
+            service=config.service_name,
+            error_type=type(e).__name__,
+            component="code_execution",
+        )
+        
         # Return error response with appropriate status code
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -209,6 +383,7 @@ async def execute_snippet(request: ExecuteSnippetRequest) -> ExecuteSnippetRespo
     finally:
         # Remove from active executions
         active_executions.pop(request_id, None)
+        set_active_executions(config.service_name, "lightweight", len(active_executions))
 
 
 @app.post(
@@ -272,8 +447,21 @@ async def create_heavy_job(request: CreateHeavyJobRequest) -> CreateHeavyJobResp
             resource_limits=request.resource_limits,
         )
         
-        # Create the Kubernetes Job
-        result = job_manager.create_job(job_request)
+        # Create the Kubernetes Job with tracing
+        with trace_kubernetes_job(f"heavy-executor-{request.request_id}", request.request_id):
+            result = job_manager.create_job(job_request)
+            
+            # Add job details to span
+            add_span_attribute("job.id", result.job_id)
+            add_span_attribute("job.status", result.status)
+            add_span_attribute("job.cpu_limit", request.resource_limits.cpu_limit)
+            add_span_attribute("job.memory_limit", request.resource_limits.memory_limit)
+        
+        # Record Kubernetes job metric
+        record_kubernetes_job(
+            service=config.service_name,
+            status="created",
+        )
         
         logger.info(
             "Heavy job created successfully",
@@ -283,6 +471,9 @@ async def create_heavy_job(request: CreateHeavyJobRequest) -> CreateHeavyJobResp
                 "status": result.status,
             }
         )
+        
+        # Set span status to OK
+        set_span_status(StatusCode.OK)
         
         return CreateHeavyJobResponse(
             job_id=result.job_id,
@@ -301,6 +492,22 @@ async def create_heavy_job(request: CreateHeavyJobRequest) -> CreateHeavyJobResp
             exc_info=True,
         )
         
+        # Record exception in span
+        record_exception(e)
+        
+        # Record error metric
+        record_error(
+            service=config.service_name,
+            error_type=type(e).__name__,
+            component="kubernetes_job_creation",
+        )
+        
+        # Record failed job metric
+        record_kubernetes_job(
+            service=config.service_name,
+            status="failed",
+        )
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -315,17 +522,18 @@ async def create_heavy_job(request: CreateHeavyJobRequest) -> CreateHeavyJobResp
     "/api/v1/health",
     response_model=HealthResponse,
     status_code=status.HTTP_200_OK,
-    summary="Health check endpoint",
+    summary="Health check endpoint (liveness probe)",
     description="Returns service health status and active execution count",
 )
 async def health_check() -> HealthResponse:
     """
-    Health check endpoint for service monitoring.
+    Health check endpoint for service monitoring (liveness probe).
     
     This endpoint:
     - Returns service health status
     - Reports number of active executions
     - Provides service metadata
+    - Used by Kubernetes liveness probes
     
     Requirements:
     - 6.5: Expose health check endpoints that report service status
@@ -348,6 +556,233 @@ async def health_check() -> HealthResponse:
         service_name=config.service_name,
         version="1.0.0",
     )
+
+
+@app.get(
+    "/api/v1/ready",
+    status_code=status.HTTP_200_OK,
+    summary="Readiness check endpoint (readiness probe)",
+    description="Returns whether the service is ready to accept requests",
+)
+async def readiness_check() -> dict:
+    """
+    Readiness check endpoint (readiness probe).
+    
+    Returns whether the service is ready to accept requests.
+    This endpoint is used by Kubernetes readiness probes.
+    
+    Returns:
+        Dictionary with readiness status
+    """
+    # Check if database is accessible
+    ready = True
+    try:
+        session = db_manager.get_session()
+        session.close()
+    except Exception as e:
+        logger.warning(f"Database not accessible: {e}")
+        ready = False
+    
+    return {
+        "ready": ready,
+        "service_name": config.service_name,
+        "active_executions": len(active_executions),
+    }
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus metrics endpoint.
+    
+    Exposes metrics in Prometheus text format for scraping.
+    
+    Returns:
+        Response with Prometheus metrics
+    """
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
+
+
+@app.get(
+    "/api/v1/job_history",
+    response_model=JobHistoryListResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get job execution history",
+    description="Retrieves job execution history with pagination and filtering",
+)
+async def get_job_history(
+    limit: int = 100,
+    offset: int = 0,
+    status_filter: str = None,
+    order_by: str = "timestamp",
+    order_direction: str = "desc"
+) -> JobHistoryListResponse:
+    """
+    Retrieve job execution history with pagination.
+    
+    This endpoint:
+    - Returns paginated job history records
+    - Supports filtering by status
+    - Supports ordering by different fields
+    - Provides total count for pagination
+    
+    Requirements:
+    - 6.3: Store and query execution metadata including timestamps, status, and resource usage
+    
+    Args:
+        limit: Maximum number of records to return (default: 100)
+        offset: Number of records to skip (default: 0)
+        status_filter: Filter by execution status (optional)
+        order_by: Field to order by (default: timestamp)
+        order_direction: Order direction - asc or desc (default: desc)
+    
+    Returns:
+        JobHistoryListResponse with paginated records
+    """
+    logger.info(
+        "Job history query requested",
+        extra={
+            "limit": limit,
+            "offset": offset,
+            "status_filter": status_filter,
+            "order_by": order_by,
+            "order_direction": order_direction,
+        }
+    )
+    
+    try:
+        session = db_manager.get_session()
+        repository = JobHistoryRepository(session)
+        
+        # Get records based on filter
+        if status_filter:
+            records = repository.get_by_status(status_filter, limit, offset)
+        else:
+            records = repository.get_all(limit, offset, order_by, order_direction)
+        
+        # Get total count
+        if status_filter:
+            total = repository.count_by_status(status_filter)
+        else:
+            total = repository.get_total_count()
+        
+        # Convert to dictionaries
+        records_dict = [repository.to_dict(record) for record in records]
+        
+        session.close()
+        
+        logger.info(
+            "Job history query completed",
+            extra={
+                "total": total,
+                "returned": len(records_dict),
+            }
+        )
+        
+        return JobHistoryListResponse(
+            total=total,
+            limit=limit,
+            offset=offset,
+            records=records_dict,
+        )
+    
+    except Exception as e:
+        logger.error(
+            "Job history query failed",
+            extra={
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "Failed to retrieve job history",
+                "message": str(e),
+            }
+        )
+
+
+@app.get(
+    "/api/v1/job_history/{request_id}",
+    response_model=JobHistoryResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get job history by request ID",
+    description="Retrieves a specific job execution record by request ID",
+)
+async def get_job_by_request_id(request_id: str) -> JobHistoryResponse:
+    """
+    Retrieve job history by request ID.
+    
+    This endpoint:
+    - Returns a specific job history record
+    - Includes all metadata fields
+    
+    Requirements:
+    - 6.3: Store and query execution metadata including timestamps, status, and resource usage
+    
+    Args:
+        request_id: Request identifier
+    
+    Returns:
+        JobHistoryResponse with job details
+    
+    Raises:
+        HTTPException: If job not found
+    """
+    logger.info(
+        "Job history lookup by request_id",
+        extra={"request_id": request_id}
+    )
+    
+    try:
+        session = db_manager.get_session()
+        repository = JobHistoryRepository(session)
+        
+        record = repository.get_by_request_id(request_id)
+        
+        if not record:
+            session.close()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "error": "Job not found",
+                    "message": f"No job history found for request_id: {request_id}",
+                }
+            )
+        
+        record_dict = repository.to_dict(record)
+        session.close()
+        
+        logger.info(
+            "Job history lookup completed",
+            extra={"request_id": request_id, "status": record.status}
+        )
+        
+        return JobHistoryResponse(**record_dict)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "Job history lookup failed",
+            extra={
+                "request_id": request_id,
+                "error": str(e),
+                "error_type": type(e).__name__,
+            },
+            exc_info=True,
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error": "Failed to retrieve job history",
+                "message": str(e),
+            }
+        )
 
 
 @app.exception_handler(Exception)
