@@ -1,0 +1,64 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: llm-executor-platform
+
+# Common labels applied to all resources
+commonLabels:
+  platform: llm-executor
+  managed-by: kustomize
+
+# Resources to deploy
+resources:
+  # RBAC
+  - executor-service-rbac.yaml
+  
+  # Configuration
+  - configmap.yaml
+  - secrets.yaml
+  
+  # Services
+  - llm-service-service.yaml
+  - executor-service-service.yaml
+  
+  # Deployments
+  - llm-service-deployment.yaml
+  - executor-service-deployment.yaml
+  
+  # Autoscaling
+  - executor-service-hpa.yaml
+
+# Images to use (can be overridden with kustomize edit set image)
+images:
+  - name: llm-service
+    newName: llm-service
+    newTag: latest
+  - name: executor-service
+    newName: executor-service
+    newTag: latest
+
+# ConfigMap generator (alternative to configmap.yaml)
+# Uncomment to generate ConfigMap from files or literals
+# configMapGenerator:
+#   - name: llm-executor-config
+#     literals:
+#       - log_level=INFO
+#       - max_retries=3
+
+# Secret generator (alternative to secrets.yaml)
+# Uncomment to generate Secret from files or literals
+# secretGenerator:
+#   - name: llm-executor-secrets
+#     literals:
+#       - llm_api_key=REPLACE_ME
+
+# Namespace to deploy to (uncomment to set)
+# namespace: llm-executor
+
+# Replicas (can override deployment replicas)
+# replicas:
+#   - name: llm-service
+#     count: 3
+#   - name: executor-service
+#     count: 5
