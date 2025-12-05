@@ -3,7 +3,7 @@
 import logging
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from contextvars import ContextVar
 
@@ -17,46 +17,34 @@ class StructuredFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as structured JSON."""
         log_data: Dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "level": record.levelname,
             "service": getattr(record, "service", "unknown"),
             "message": record.getMessage(),
         }
 
-        # Add request_id from context or record
+        # Standard logging fields to exclude from extra data
+        excluded_fields = {
+            "name", "msg", "args", "created", "filename", "funcName",
+            "levelname", "levelno", "lineno", "module", "msecs", "message",
+            "pathname", "process", "processName", "relativeCreated",
+            "thread", "threadName", "exc_info", "exc_text", "stack_info",
+            "taskName"
+        }
+
+        # Add request_id from context first (highest priority)
         request_id = request_id_context.get()
         if request_id:
             log_data["request_id"] = request_id
-        elif hasattr(record, "request_id"):
-            log_data["request_id"] = record.request_id
-
-        # Add extra fields from record
+        
+        # Add extra fields from record (including request_id if not from context)
         for key, value in record.__dict__.items():
-            if key not in [
-                "name",
-                "msg",
-                "args",
-                "created",
-                "filename",
-                "funcName",
-                "levelname",
-                "levelno",
-                "lineno",
-                "module",
-                "msecs",
-                "message",
-                "pathname",
-                "process",
-                "processName",
-                "relativeCreated",
-                "thread",
-                "threadName",
-                "exc_info",
-                "exc_text",
-                "stack_info",
-                "service",
-                "request_id",
-            ]:
+            if key not in excluded_fields and value is not None:
+                # Skip service and request_id if already set
+                if key == "service" and "service" in log_data:
+                    continue
+                if key == "request_id" and "request_id" in log_data:
+                    continue
                 log_data[key] = value
 
         # Add exception info if present
@@ -94,6 +82,26 @@ def setup_logging(service_name: str, level: str = "INFO") -> None:
     logging.getLogger().service_name = service_name
 
 
+class CustomLoggerAdapter(logging.LoggerAdapter):
+    """Custom LoggerAdapter that properly merges extra fields from both adapter and logging calls."""
+    
+    def process(self, msg, kwargs):
+        """
+        Process the logging call to merge extra fields from both the adapter
+        and the logging call itself.
+        """
+        # Get extra from the logging call
+        call_extra = kwargs.get("extra", {})
+        
+        # Merge adapter's extra with call's extra (call's extra takes precedence)
+        merged_extra = {**self.extra, **call_extra}
+        
+        # Update kwargs with merged extra
+        kwargs["extra"] = merged_extra
+        
+        return msg, kwargs
+
+
 def get_logger(name: str, service: Optional[str] = None) -> logging.LoggerAdapter:
     """
     Get a logger with structured logging support.
@@ -103,7 +111,7 @@ def get_logger(name: str, service: Optional[str] = None) -> logging.LoggerAdapte
         service: Service name (optional, uses root logger's service_name if not provided)
 
     Returns:
-        LoggerAdapter with service context
+        CustomLoggerAdapter with service context
     """
     logger = logging.getLogger(name)
 
@@ -111,8 +119,8 @@ def get_logger(name: str, service: Optional[str] = None) -> logging.LoggerAdapte
     if service is None:
         service = getattr(logging.getLogger(), "service_name", "unknown")
 
-    # Create adapter that adds service to all log records
-    adapter = logging.LoggerAdapter(logger, {"service": service})
+    # Create custom adapter that properly merges extra fields
+    adapter = CustomLoggerAdapter(logger, {"service": service})
 
     return adapter
 
