@@ -210,7 +210,7 @@
   - Test that processing failures are logged and message is not acknowledged
   - _Requirements: 5.4_
 
-- [ ] 12. Build Heavy Job Runner Docker image with data libraries
+- [x] 12. Build Heavy Job Runner Docker image with data libraries
   - Create deploy/docker/heavy-job-runner/Dockerfile based on python:3.11
   - Install pandas, modin, polars, pyarrow, cloudpickle, fsspec, adlfs, s3fs, and numba
   - Copy job_runner source code and install llm_executor package
@@ -220,19 +220,19 @@
   - Optimize image size with multi-stage build if needed
   - _Requirements: 10.1, 10.2, 10.3_
 
-- [ ] 12.1 Write property test for supported libraries are importable
+- [x] 12.1 Write property test for supported libraries are importable
   - **Property 27: Supported libraries are importable**
   - **Validates: Requirements 10.2**
 
-- [ ] 12.2 Write unit test for library availability
+- [x] 12.2 Write unit test for library availability
   - Test that all required libraries can be imported without errors
   - _Requirements: 10.1_
 
-- [ ] 12.3 Write unit test for cloud storage support
+- [x] 12.3 Write unit test for cloud storage support
   - Test that fsspec with adlfs and s3fs can access mock storage
   - _Requirements: 10.3_
 
-- [ ] 13. Implement error handling and retry logic
+- [x] 13. Implement error handling and retry logic
   - Create error_handlers.py module in executor_service
   - Implement ExecutionErrorHandler that categorizes errors as retryable or non-retryable
   - Add exponential backoff calculation for retryable execution errors (2^attempt, max 60s)
@@ -243,45 +243,45 @@
   - Implement failure event emission for jobs that exceed retry limits
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5_
 
-- [ ] 13.1 Write property test for execution retry policy
+- [x] 13.1 Write property test for execution retry policy
   - **Property 24: Execution retry policy**
   - **Validates: Requirements 9.2**
 
-- [ ] 13.2 Write property test for timeout errors are not retried
+- [x] 13.2 Write property test for timeout errors are not retried
   - **Property 25: Timeout errors are not retried**
   - **Validates: Requirements 9.4**
 
-- [ ] 13.3 Write property test for max retries returns failure
+- [x] 13.3 Write property test for max retries returns failure
   - **Property 26: Max retries returns failure**
   - **Validates: Requirements 9.5**
 
-- [ ] 13.4 Write unit test for Kubernetes Job retry
+- [x] 13.4 Write unit test for Kubernetes Job retry
   - Test that failed jobs trigger retry according to backoff policy
   - _Requirements: 9.3_
 
-- [ ] 14. Implement job history and metadata storage
+- [x] 14. Implement job history and metadata storage
   - Create database schema for job execution history (timestamp, status, resource_usage, request_id)
   - Implement repository pattern for storing and querying job history
   - Add metadata recording for all completed executions
   - Implement query endpoints for job history retrieval
   - _Requirements: 6.3_
 
-- [ ] 14.1 Write property test for job history contains metadata
+- [x] 14.1 Write property test for job history contains metadata
   - **Property 20: Job history contains metadata**
   - **Validates: Requirements 6.3**
 
-- [ ] 15. Implement comprehensive error logging
+- [x] 15. Implement comprehensive error logging
   - Update all error handlers to include stack traces in log entries
   - Add context information (request_id, component, operation) to all error logs
   - Implement log aggregation configuration for Azure Log Analytics
   - Set up log retention policies (30 days INFO, 90 days ERROR)
   - _Requirements: 6.4_
 
-- [ ] 15.1 Write property test for error logs contain stack traces
+- [x] 15.1 Write property test for error logs contain stack traces
   - **Property 21: Error logs contain stack traces**
   - **Validates: Requirements 6.4**
 
-- [ ] 16. Create Kubernetes deployment manifests
+- [x] 16. Create Kubernetes deployment manifests
   - Create Deployment manifest for LLM Service with 3 replicas and resource limits
   - Create Deployment manifest for Executor Service with 5 replicas and security context
   - Create HorizontalPodAutoscaler for Executor Service (min 3, max 20, 70% CPU target)
@@ -290,7 +290,7 @@
   - Create Secret manifests for sensitive credentials (Event Hub, storage)
   - _Requirements: 7.1, 7.2_
 
-- [ ] 17. Implement monitoring and observability
+- [x] 17. Implement monitoring and observability
   - Add Prometheus metrics endpoints to both services (request_rate, validation_success_rate, execution_duration)
   - Implement OpenTelemetry instrumentation for distributed tracing
   - Add span annotations for key operations (generation, validation, classification, execution)
@@ -298,7 +298,7 @@
   - Set up health check probes (liveness and readiness) for Kubernetes
   - _Requirements: 6.1, 6.2_
 
-- [ ] 17.1 Write unit test for metrics endpoint
+- [x] 17.1 Write unit test for metrics endpoint
   - Test that metrics endpoint exposes required metrics in Prometheus format
   - _Requirements: 6.2_
 
