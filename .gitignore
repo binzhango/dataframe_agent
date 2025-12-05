@@ -34,9 +34,6 @@ ENV/
 *.swo
 *~
 
-# Kiro
-.kiro/
-
 # Testing
 .pytest_cache/
 .coverage
