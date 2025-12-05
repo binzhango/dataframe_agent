@@ -76,6 +76,12 @@ class HealthResponse(BaseModel):
 # Load configuration
 config = LLMServiceConfig()
 
+# Validate configuration on startup
+try:
+    config.validate_on_startup()
+except ValueError as e:
+    raise RuntimeError(f"Configuration validation failed: {e}") from e
+
 # Initialize logger
 logger = get_logger(__name__)
 
