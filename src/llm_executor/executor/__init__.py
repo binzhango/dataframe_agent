@@ -8,6 +8,7 @@ from llm_executor.executor.validator import (
     NoNetworkRule,
     ImportValidationRule,
 )
+from llm_executor.executor.classifier import CodeClassifier
 
 __all__ = [
     "CodeValidator",
@@ -16,4 +17,5 @@ __all__ = [
     "NoOSCommandsRule",
     "NoNetworkRule",
     "ImportValidationRule",
+    "CodeClassifier",
 ]
