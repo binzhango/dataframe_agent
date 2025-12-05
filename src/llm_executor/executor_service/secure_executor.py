@@ -197,8 +197,11 @@ class SecureExecutor:
                         extra={
                             "request_id": request_id,
                             "temp_dir": temp_dir,
-                            "error": str(cleanup_error)
-                        }
+                            "error": str(cleanup_error),
+                            "component": "secure_executor",
+                            "operation": "cleanup_temp_directory"
+                        },
+                        exc_info=True
                     )
     
     def get_restricted_env(self) -> Dict[str, str]:
