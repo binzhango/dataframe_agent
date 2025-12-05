@@ -128,7 +128,7 @@
   - Test that /api/v1/health returns service status and active execution count
   - _Requirements: 6.5_
 
-- [ ] 8. Implement Kubernetes Job creation and management
+- [x] 8. Implement Kubernetes Job creation and management
   - Create KubernetesJobManager class in executor_service
   - Implement job creation logic using Kubernetes Python client (kubernetes library)
   - Create Job template with CPU and memory limits from ResourceLimits model
@@ -138,29 +138,29 @@
   - Configure pod security context (runAsNonRoot, readOnlyRootFilesystem, no privilege escalation)
   - _Requirements: 4.3, 8.1, 8.2, 8.3, 8.4_
 
-- [ ] 8.1 Implement POST /api/v1/create_heavy_job endpoint
+- [x] 8.1 Implement POST /api/v1/create_heavy_job endpoint
   - Add endpoint to Executor Service API that creates Kubernetes Jobs
   - Wire endpoint to KubernetesJobManager for job creation
   - Return job_id, status, and created_at timestamp
   - _Requirements: 4.3_
 
-- [ ] 8.2 Write property test for heavy code creates Kubernetes Job
+- [x] 8.2 Write property test for heavy code creates Kubernetes Job
   - **Property 14: Heavy code creates Kubernetes Job**
   - **Validates: Requirements 4.3, 8.1**
 
-- [ ] 8.3 Write unit test for job security configuration
+- [x] 8.3 Write unit test for job security configuration
   - Test that created jobs have correct security context and resource limits
   - _Requirements: 8.2_
 
-- [ ] 8.4 Write unit test for job TTL cleanup
+- [x] 8.4 Write unit test for job TTL cleanup
   - Test that completed jobs are configured with TTL for automatic cleanup
   - _Requirements: 8.3_
 
-- [ ] 8.5 Write unit test for PreStop hooks
+- [x] 8.5 Write unit test for PreStop hooks
   - Test that job pods have PreStop hooks configured
   - _Requirements: 8.4_
 
-- [ ] 9. Build Heavy Job Runner execution logic
+- [x] 9. Build Heavy Job Runner execution logic
   - Create runner.py script in job_runner directory as main entry point
   - Implement code fetching from environment variables (CODE, REQUEST_ID, TIMEOUT)
   - Implement code execution in subprocess with timeout enforcement
@@ -171,11 +171,11 @@
   - Add structured logging with request_id throughout execution
   - _Requirements: 4.4, 8.5_
 
-- [ ] 9.1 Write property test for temporary file cleanup
+- [x] 9.1 Write property test for temporary file cleanup
   - **Property 22: Temporary file cleanup**
   - **Validates: Requirements 8.5**
 
-- [ ] 10. Implement Event Hub integration for Heavy Job Runner
+- [x] 10. Implement Event Hub integration for Heavy Job Runner
   - Add Azure Event Hub producer client initialization in runner.py
   - Implement completion event emission with request_id, status, result_location, and duration_ms
   - Add error event emission for failed executions with error details
@@ -183,7 +183,7 @@
   - Add connection string configuration from HeavyJobRunnerConfig
   - _Requirements: 4.5, 5.3_
 
-- [ ] 10.1 Write property test for job completion emits event
+- [x] 10.1 Write property test for job completion emits event
   - **Property 15: Job completion emits event**
   - **Validates: Requirements 4.5, 5.3**
 
