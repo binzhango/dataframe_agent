@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base manifests
+bases:
+  - ../../
+
+# Staging namespace
+namespace: llm-executor-staging
+
+# Staging-specific labels
+commonLabels:
+  environment: staging
+
+# Override images with staging tags
+images:
+  - name: llm-service
+    newName: your-registry.azurecr.io/llm-service
+    newTag: staging
+  - name: executor-service
+    newName: your-registry.azurecr.io/executor-service
+    newTag: staging
+
+# Staging replicas (smaller than production)
+replicas:
+  - name: llm-service
+    count: 2
+  - name: executor-service
+    count: 3
+
+# Staging ConfigMap overrides
+configMapGenerator:
+  - name: llm-executor-config
+    behavior: merge
+    literals:
+      - log_level=DEBUG
+      - max_retries=3

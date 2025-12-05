@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Reference base manifests
+bases:
+  - ../../
+
+# Production namespace
+namespace: llm-executor-prod
+
+# Production-specific labels
+commonLabels:
+  environment: production
+
+# Override images with production tags
+images:
+  - name: llm-service
+    newName: your-registry.azurecr.io/llm-service
+    newTag: v1.0.0
+  - name: executor-service
+    newName: your-registry.azurecr.io/executor-service
+    newTag: v1.0.0
+
+# Production replicas
+replicas:
+  - name: llm-service
+    count: 5
+  - name: executor-service
+    count: 10
+
+# Production-specific patches
+patchesStrategicMerge:
+  - resource-limits-patch.yaml
+  - hpa-patch.yaml
+
+# Production ConfigMap overrides
+configMapGenerator:
+  - name: llm-executor-config
+    behavior: merge
+    literals:
+      - log_level=WARNING
+      - max_retries=5
+      - heavy_job_cpu_limit=8
+      - heavy_job_memory_limit=16Gi
