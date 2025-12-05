@@ -187,7 +187,7 @@
   - **Property 15: Job completion emits event**
   - **Validates: Requirements 4.5, 5.3**
 
-- [ ] 11. Implement Event Hub consumer in Executor Service
+- [x] 11. Implement Event Hub consumer in Executor Service
   - Create EventHubConsumer class in executor_service
   - Implement consumer that subscribes to code-execution-requests topic
   - Implement message parsing and validation using CodeExecutionRequest model
@@ -198,15 +198,15 @@
   - Add structured logging with request_id for all Event Hub message processing
   - _Requirements: 5.1, 5.2, 5.4, 5.5_
 
-- [ ] 11.1 Write property test for Event Hub message parsing
+- [x] 11.1 Write property test for Event Hub message parsing
   - **Property 16: Event Hub message parsing**
   - **Validates: Requirements 5.1**
 
-- [ ] 11.2 Write property test for Event Hub heavy code routing
+- [x] 11.2 Write property test for Event Hub heavy code routing
   - **Property 17: Event Hub heavy code routing**
   - **Validates: Requirements 5.2**
 
-- [ ] 11.3 Write unit test for Event Hub error handling
+- [x] 11.3 Write unit test for Event Hub error handling
   - Test that processing failures are logged and message is not acknowledged
   - _Requirements: 5.4_
 

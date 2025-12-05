@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-service
+  labels:
+    app: llm-service
+    component: code-generation
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: llm-service
+  template:
+    metadata:
+      labels:
+        app: llm-service
+        component: code-generation
+    spec:
+      containers:
+      - name: llm-service
+        image: llm-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: log_level
+        - name: MAX_RETRIES
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: max_retries
+        - name: VALIDATION_TIMEOUT_MS
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: validation_timeout_ms
+        - name: EXECUTOR_SERVICE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: executor_service_url
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: llm-executor-secrets
+              key: llm_api_key
+        - name: EVENT_HUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: llm-executor-secrets
+              key: event_hub_connection_string
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+      restartPolicy: Always
