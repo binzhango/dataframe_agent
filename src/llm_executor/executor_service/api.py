@@ -116,6 +116,12 @@ class JobHistoryListResponse(BaseModel):
 # Initialize configuration
 config = ExecutorServiceConfig()
 
+# Validate configuration on startup
+try:
+    config.validate_on_startup()
+except ValueError as e:
+    raise RuntimeError(f"Configuration validation failed: {e}") from e
+
 # Initialize SecureExecutor
 executor = SecureExecutor(default_timeout=config.execution_timeout)
 
