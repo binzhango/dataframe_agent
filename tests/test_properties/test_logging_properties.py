@@ -132,15 +132,13 @@ def test_structured_logging_without_request_id_context(request_id, message, serv
     logger.handlers = []
     logger.addHandler(handler)
     
-    # Create adapter with service context
-    adapter = logging.LoggerAdapter(logger, {"service": service_name})
-    
     # Clear any existing request_id from context
     clear_request_id()
     
     try:
-        # Log a message with request_id as extra field
-        adapter.info(message, extra={"request_id": request_id})
+        # Log a message with request_id and service as extra fields
+        # Using logger directly (not adapter) to ensure extra fields are properly added
+        logger.info(message, extra={"request_id": request_id, "service": service_name})
         
         # Get the logged output
         log_output = log_buffer.getvalue()
