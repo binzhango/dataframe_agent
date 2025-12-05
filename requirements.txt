@@ -16,3 +16,13 @@ azure-eventhub>=5.11.0
 fsspec>=2023.0.0
 adlfs>=2023.0.0
 s3fs>=2023.0.0
+
+# Database for job history
+sqlalchemy>=2.0.0
+
+# Monitoring and observability
+prometheus-client>=0.19.0
+opentelemetry-api>=1.21.0
+opentelemetry-sdk>=1.21.0
+opentelemetry-instrumentation-fastapi>=0.42b0
+opentelemetry-exporter-otlp>=1.21.0
