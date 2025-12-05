@@ -16,6 +16,15 @@ class BaseConfig(BaseSettings):
     # Common configuration
     log_level: str = "INFO"
     service_name: str = "unknown"
+    
+    # Log aggregation configuration for Azure Log Analytics
+    azure_log_analytics_workspace_id: str = ""
+    azure_log_analytics_shared_key: str = ""
+    azure_log_analytics_log_type: str = "LLMExecutorLogs"
+    
+    # Log retention policies (in days)
+    log_retention_info_days: int = 30
+    log_retention_error_days: int = 90
 
 
 class LLMServiceConfig(BaseConfig):
