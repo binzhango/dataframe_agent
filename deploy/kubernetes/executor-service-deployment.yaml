@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor-service
+  labels:
+    app: executor-service
+    component: code-execution
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: executor-service
+  template:
+    metadata:
+      labels:
+        app: executor-service
+        component: code-execution
+    spec:
+      serviceAccountName: executor-service
+      containers:
+      - name: executor-service
+        image: executor-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+          name: http
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: log_level
+        - name: EXECUTION_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: execution_timeout
+        - name: MAX_EXECUTION_RETRIES
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: max_execution_retries
+        - name: KUBERNETES_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: HEAVY_JOB_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: heavy_job_image
+        - name: EVENT_HUB_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: llm-executor-secrets
+              key: event_hub_connection_string
+        - name: EVENT_HUB_CONSUMER_GROUP
+          valueFrom:
+            configMapKeyRef:
+              name: llm-executor-config
+              key: event_hub_consumer_group
+        - name: STORAGE_CONNECTION_STRING
+          valueFrom:
+            secretKeyRef:
+              name: llm-executor-secrets
+              key: storage_connection_string
+        resources:
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+          limits:
+            cpu: "4"
+            memory: "8Gi"
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      restartPolicy: Always
