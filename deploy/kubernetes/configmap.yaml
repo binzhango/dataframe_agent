@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-executor-config
+  labels:
+    app: llm-executor
+    component: shared-config
+data:
+  # Logging configuration
+  log_level: "INFO"
+  
+  # LLM Service configuration
+  max_retries: "3"
+  validation_timeout_ms: "30"
+  executor_service_url: "http://executor-service:8001"
+  
+  # Executor Service configuration
+  execution_timeout: "30"
+  max_execution_retries: "3"
+  heavy_job_image: "heavy-executor:latest"
+  
+  # Event Hub configuration
+  event_hub_consumer_group: "$Default"
+  event_hub_requests_topic: "code-execution-requests"
+  event_hub_results_topic: "execution-results"
+  
+  # Resource limits for heavy jobs
+  heavy_job_cpu_limit: "4"
+  heavy_job_memory_limit: "8Gi"
+  heavy_job_cpu_request: "2"
+  heavy_job_memory_request: "4Gi"
+  heavy_job_timeout: "300"
+  heavy_job_ttl: "3600"
+  
+  # Database configuration
+  db_host: "postgres-service"
+  db_port: "5432"
+  db_name: "llm_executor"
+  
+  # Storage configuration
+  storage_container: "execution-results"
+  storage_account_name: "llmexecutorstorage"
